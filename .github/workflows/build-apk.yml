@@ -25,7 +25,10 @@ jobs:
           cache: true
 
       - name: Ensure Android platform files
-        run: flutter create . --platforms=android
+        run: |
+          flutter create . --platforms=android
+          rm -f android/build.gradle.kts android/app/build.gradle.kts android/settings.gradle.kts
+          sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.2-all.zip|' android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Install dependencies
         run: flutter pub get
