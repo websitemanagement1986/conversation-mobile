@@ -1,0 +1,25 @@
+name: voice_language_tutor
+description: Interactive AI language tutor with voice conversations.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_generative_ai: ^0.4.6
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.2.0
+  shared_preferences: ^2.3.3
+  permission_handler: ^11.3.1
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
