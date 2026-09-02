@@ -136,13 +136,13 @@ class SessionController {
     _setStatus(SessionStatus.connecting);
 
     _history.add(Content.text(text));
-    _transcript.add(TranscriptLine(
+    transcript.add(TranscriptLine(
       id: _uuid.v4(),
       role: 'user',
       text: text,
       timestamp: DateTime.now(),
     ));
-    _transcriptController.add(_transcript.last);
+    _transcriptController.add(transcript.last);
 
     try {
       final response = await _gemini.chat(
@@ -170,13 +170,13 @@ class SessionController {
   }
 
   void _addAssistantMessage(String text, ParsedResponse parsed) {
-    _transcript.add(TranscriptLine(
+    transcript.add(TranscriptLine(
       id: _uuid.v4(),
       role: 'assistant',
       text: text,
       timestamp: DateTime.now(),
     ));
-    _transcriptController.add(_transcript.last);
+    _transcriptController.add(transcript.last);
 
     for (final c in parsed.corrections) {
       corrections.add(c);
