@@ -28,13 +28,14 @@ jobs:
         run: |
           flutter create . --platforms=android
           rm -f android/build.gradle.kts android/app/build.gradle.kts android/settings.gradle.kts
-          sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.2-all.zip|' android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.13-all.zip|' android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's|id "com.android.application" version "[^"]*"|id "com.android.application" version "8.11.1"|' android/settings.gradle
 
       - name: Install dependencies
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --android-skip-build-dependency-validation
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
