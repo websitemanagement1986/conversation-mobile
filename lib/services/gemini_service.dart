@@ -18,7 +18,7 @@ class GeminiService {
   GeminiService(this.apiKey);
 
   final String apiKey;
-  static const _modelName = 'gemini-2.0-flash';
+  static const _modelName = geminiModelName;
 
   GenerativeModel _model(SessionConfig config) {
     return GenerativeModel(
