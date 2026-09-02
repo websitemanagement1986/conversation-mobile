@@ -18,40 +18,50 @@ class GeminiService {
   GeminiService(this.apiKey);
 
   final String apiKey;
-  static const _modelName = geminiModelName;
+  GenerativeModel? _model;
+  ChatSession? _chat;
 
-  GenerativeModel _model(SessionConfig config) {
-    return GenerativeModel(
-      model: _modelName,
+  static final _generationConfig = GenerationConfig(
+    maxOutputTokens: 280,
+    temperature: 0.8,
+  );
+
+  void beginSession(SessionConfig config) {
+    _model = GenerativeModel(
+      model: geminiModelName,
       apiKey: apiKey,
       systemInstruction: Content.system(buildInstructions(config)),
+      generationConfig: _generationConfig,
     );
-  }
-
-  Future<ParsedResponse> chat({
-    required SessionConfig config,
-    required List<Content> history,
-    required String userMessage,
-  }) async {
-    final model = _model(config);
-    final chat = model.startChat(history: history);
-    final response = await chat.sendMessage(Content.text(userMessage));
-    final raw = response.text ?? '';
-    return _parseResponse(raw);
+    _chat = _model!.startChat();
   }
 
   Future<ParsedResponse> startConversation(SessionConfig config) async {
-    final model = _model(config);
-    final response = await model.generateContent([
+    beginSession(config);
+    final response = await _chat!.sendMessage(
       Content.text(
-        '[System: Start the conversation. Greet the student in ${config.targetLanguage.name} and set the scene.]',
+        'Start now. Greet the student in ${config.targetLanguage.name} and set the scene in 1-2 short sentences.',
       ),
-    ]);
-    final raw = response.text ?? '';
-    return _parseResponse(raw);
+    );
+    return parseResponse(response.text ?? '');
   }
 
-  ParsedResponse _parseResponse(String raw) {
+  Future<ParsedResponse> chat(String userMessage) async {
+    final response = await _chat!.sendMessage(Content.text(userMessage));
+    return parseResponse(response.text ?? '');
+  }
+
+  Stream<String> chatStream(String userMessage) async* {
+    final stream = _chat!.sendMessageStream(Content.text(userMessage));
+    await for (final chunk in stream) {
+      final text = chunk.text;
+      if (text != null && text.isNotEmpty) {
+        yield text;
+      }
+    }
+  }
+
+  ParsedResponse parseResponse(String raw) {
     final corrections = <Correction>[];
     final vocabulary = <VocabEntry>[];
     var text = raw;

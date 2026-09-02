@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:uuid/uuid.dart';
@@ -8,7 +7,16 @@ import '../models/models.dart';
 import 'gemini_service.dart';
 import 'speech_service.dart';
 
-enum SessionStatus { idle, connecting, connected, listening, speaking, error, ended }
+enum SessionStatus {
+  idle,
+  connecting,
+  connected,
+  listening,
+  thinking,
+  speaking,
+  error,
+  ended,
+}
 
 class SessionController {
   SessionController({
@@ -26,12 +34,18 @@ class SessionController {
 
   final _statusController = StreamController<SessionStatus>.broadcast();
   final _transcriptController = StreamController<TranscriptLine>.broadcast();
+  final _partialTranscriptController = StreamController<String>.broadcast();
+  final _assistantPartialController = StreamController<String>.broadcast();
   final _correctionController = StreamController<Correction>.broadcast();
   final _vocabController = StreamController<VocabEntry>.broadcast();
   final _errorController = StreamController<String>.broadcast();
 
   Stream<SessionStatus> get statusStream => _statusController.stream;
   Stream<TranscriptLine> get transcriptStream => _transcriptController.stream;
+  Stream<String> get partialTranscriptStream =>
+      _partialTranscriptController.stream;
+  Stream<String> get assistantPartialStream =>
+      _assistantPartialController.stream;
   Stream<Correction> get correctionStream => _correctionController.stream;
   Stream<VocabEntry> get vocabStream => _vocabController.stream;
   Stream<String> get errorStream => _errorController.stream;
@@ -39,11 +53,13 @@ class SessionController {
   final List<TranscriptLine> transcript = [];
   final List<Correction> corrections = [];
   final List<VocabEntry> vocabulary = [];
-  final List<Content> _history = [];
 
   SessionStatus status = SessionStatus.idle;
+  String partialUserText = '';
+  String partialAssistantText = '';
   bool _listening = false;
   bool _disposed = false;
+  bool _handlingMessage = false;
   DateTime? startedAt;
 
   Future<bool> start() async {
@@ -60,12 +76,17 @@ class SessionController {
     await speech.init();
 
     final available = await _stt.initialize(
-      onError: (e) => _emitError(e.errorMsg),
+      onError: (e) {
+        if (e.errorMsg != 'error_no_match') {
+          _emitError(e.errorMsg);
+        }
+      },
       onStatus: (s) {
-        if (s == 'done' || s == 'notListening') {
-          if (_listening && config.micMode == MicMode.openMic) {
-            _restartListening();
-          }
+        if ((s == 'done' || s == 'notListening') &&
+            _listening &&
+            !_handlingMessage &&
+            config.micMode == MicMode.openMic) {
+          _restartListening();
         }
       },
     );
@@ -78,13 +99,14 @@ class SessionController {
 
     try {
       final opening = await _gemini.startConversation(config);
-      _history.add(Content.model([TextPart(opening.text)]));
       _addAssistantMessage(opening.text, opening);
-      await speech.speak(
+      _setStatus(SessionStatus.speaking);
+      unawaited(speech.speak(
         opening.text,
         config.targetLanguage,
         config.pace,
-      );
+      ));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
       _setStatus(SessionStatus.connected);
 
       if (config.micMode == MicMode.openMic) {
@@ -104,38 +126,57 @@ class SessionController {
       await _startListening();
     } else {
       await _stt.stop();
+      partialUserText = '';
+      _partialTranscriptController.add('');
       _setStatus(SessionStatus.connected);
     }
   }
 
   Future<void> _startListening() async {
-    if (_disposed || speech.isSpeaking) return;
+    if (_disposed || speech.isSpeaking || _handlingMessage) return;
     _setStatus(SessionStatus.listening);
+    partialUserText = '';
+    _partialTranscriptController.add('');
+
     await _stt.listen(
       localeId: config.targetLanguage.speechCode,
-      listenMode: ListenMode.confirmation,
+      listenMode: ListenMode.dictation,
+      partialResults: true,
+      pauseFor: const Duration(milliseconds: 900),
+      listenFor: const Duration(seconds: 30),
+      cancelOnError: false,
       onResult: (result) async {
-        if (!result.finalResult) return;
         final text = result.recognizedWords.trim();
         if (text.isEmpty) return;
+
+        partialUserText = text;
+        _partialTranscriptController.add(text);
+
+        if (!result.finalResult) return;
         await _handleUserMessage(text);
       },
     );
   }
 
   Future<void> _restartListening() async {
-    if (_disposed || !_listening || speech.isSpeaking) return;
-    await Future.delayed(const Duration(milliseconds: 300));
-    if (_listening && !_disposed) {
+    if (_disposed || !_listening || speech.isSpeaking || _handlingMessage) {
+      return;
+    }
+    await Future.delayed(const Duration(milliseconds: 80));
+    if (_listening && !_disposed && !_handlingMessage) {
       await _startListening();
     }
   }
 
   Future<void> _handleUserMessage(String text) async {
-    await _stt.stop();
-    _setStatus(SessionStatus.connecting);
+    if (_handlingMessage || _disposed) return;
+    _handlingMessage = true;
 
-    _history.add(Content.text(text));
+    await _stt.stop();
+    partialUserText = '';
+    _partialTranscriptController.add('');
+    _setStatus(SessionStatus.thinking);
+
     transcript.add(TranscriptLine(
       id: _uuid.v4(),
       role: 'user',
@@ -145,19 +186,32 @@ class SessionController {
     _transcriptController.add(transcript.last);
 
     try {
-      final response = await _gemini.chat(
-        config: config,
-        history: _history.sublist(0, _history.length - 1),
-        userMessage: text,
-      );
-      _history.add(Content.model([TextPart(response.text)]));
-      _addAssistantMessage(response.text, response);
+      final buffer = StringBuffer();
+      partialAssistantText = '';
+      _assistantPartialController.add('');
+
+      await for (final chunk in _gemini.chatStream(text)) {
+        buffer.write(chunk);
+        partialAssistantText = buffer.toString();
+        _assistantPartialController.add(partialAssistantText);
+      }
+
+      final parsed = _gemini.parseResponse(buffer.toString());
+      partialAssistantText = '';
+      _assistantPartialController.add('');
+      _addAssistantMessage(parsed.text, parsed);
+
       _setStatus(SessionStatus.speaking);
-      await speech.speak(
-        response.text,
+      unawaited(speech.speak(
+        parsed.text,
         config.targetLanguage,
         config.pace,
-      );
+      ));
+
+      while (speech.isSpeaking && !_disposed) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+
       _setStatus(SessionStatus.connected);
       if (_listening) {
         await _restartListening();
@@ -166,6 +220,8 @@ class SessionController {
       _emitError('Failed to get response: $e');
       _setStatus(SessionStatus.error);
       if (_listening) await _restartListening();
+    } finally {
+      _handlingMessage = false;
     }
   }
 
@@ -220,6 +276,8 @@ class SessionController {
     speech.dispose();
     await _statusController.close();
     await _transcriptController.close();
+    await _partialTranscriptController.close();
+    await _assistantPartialController.close();
     await _correctionController.close();
     await _vocabController.close();
     await _errorController.close();

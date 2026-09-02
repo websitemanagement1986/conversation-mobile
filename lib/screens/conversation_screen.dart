@@ -23,6 +23,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
   final _scrollController = ScrollController();
   bool _micPressed = false;
   String? _error;
+  String _partialUser = '';
+  String _partialAssistant = '';
 
   @override
   void initState() {
@@ -31,6 +33,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
     _session.errorStream.listen((e) => setState(() => _error = e));
     _session.transcriptStream.listen((_) {
       setState(() {});
+      _scrollToBottom();
+    });
+    _session.partialTranscriptStream.listen((text) {
+      setState(() => _partialUser = text);
+      _scrollToBottom();
+    });
+    _session.assistantPartialStream.listen((text) {
+      setState(() => _partialAssistant = text);
       _scrollToBottom();
     });
     _session.correctionStream.listen((_) => setState(() {}));
@@ -94,9 +104,13 @@ class _ConversationScreenState extends State<ConversationScreen> {
     final isPushToTalk = widget.config.micMode == MicMode.pushToTalk;
     final micActive = isPushToTalk ? _micPressed : isListening;
 
+    final isThinking = status == SessionStatus.thinking;
+
     Color orbColor = AppTheme.border;
     if (isSpeaking) {
       orbColor = AppTheme.success;
+    } else if (isThinking) {
+      orbColor = AppTheme.warning;
     } else if (micActive) {
       orbColor = AppTheme.accent;
     }
@@ -129,25 +143,23 @@ class _ConversationScreenState extends State<ConversationScreen> {
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.all(16),
-              itemCount: _session.transcript.length,
+              itemCount: _session.transcript.length +
+                  (_partialUser.isNotEmpty ? 1 : 0) +
+                  (_partialAssistant.isNotEmpty ? 1 : 0),
               itemBuilder: (context, index) {
-                final line = _session.transcript[index];
-                final isUser = line.role == 'user';
-                return Align(
-                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    constraints: BoxConstraints(
-                      maxWidth: MediaQuery.of(context).size.width * 0.85,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isUser ? AppTheme.accent : AppTheme.surfaceRaised,
-                      borderRadius: BorderRadius.circular(16),
-                      border: isUser ? null : Border.all(color: AppTheme.border),
-                    ),
-                    child: Text(line.text, style: const TextStyle(fontSize: 15)),
-                  ),
+                final transcriptLen = _session.transcript.length;
+                if (index < transcriptLen) {
+                  final line = _session.transcript[index];
+                  final isUser = line.role == 'user';
+                  return _bubble(line.text, isUser: isUser);
+                }
+                if (_partialUser.isNotEmpty && index == transcriptLen) {
+                  return _bubble(_partialUser, isUser: true, isPartial: true);
+                }
+                return _bubble(
+                  _partialAssistant,
+                  isUser: false,
+                  isPartial: true,
                 );
               },
             ),
@@ -216,6 +228,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   String _statusLabel(SessionStatus status, bool micActive, bool pushToTalk) {
     return switch (status) {
       SessionStatus.connecting => 'Connecting...',
+      SessionStatus.thinking => 'Tutor is thinking...',
       SessionStatus.speaking => 'Tutor is speaking...',
       SessionStatus.listening => 'Listening...',
       SessionStatus.error => 'Error — check connection',
@@ -224,6 +237,37 @@ class _ConversationScreenState extends State<ConversationScreen> {
       _ when micActive => 'Listening...',
       _ => 'Tap mic to start listening',
     };
+  }
+
+  Widget _bubble(String text, {required bool isUser, bool isPartial = false}) {
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.85,
+        ),
+        decoration: BoxDecoration(
+          color: isUser
+              ? AppTheme.accent.withOpacity(isPartial ? 0.7 : 1)
+              : AppTheme.surfaceRaised,
+          borderRadius: BorderRadius.circular(16),
+          border: isUser
+              ? null
+              : Border.all(
+                  color: isPartial ? AppTheme.warning : AppTheme.border,
+                ),
+        ),
+        child: Text(
+          isPartial ? '$text…' : text,
+          style: TextStyle(
+            fontSize: 15,
+            fontStyle: isPartial ? FontStyle.italic : FontStyle.normal,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _helperButton(String label, VoidCallback onTap) {

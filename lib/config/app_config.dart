@@ -40,7 +40,7 @@ const levelDescriptions = <CefrLevel, String>{
   CefrLevel.c2: 'Mastery — near-native fluency',
 };
 
-const geminiModelName = 'gemini-3.5-flash';
+const geminiModelName = 'gemini-2.5-flash-lite';
 
 LanguageOption languageByCode(String code) {
   return languages.firstWhere(
