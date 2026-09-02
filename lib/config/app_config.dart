@@ -41,6 +41,8 @@ const levelDescriptions = <CefrLevel, String>{
 };
 
 const geminiModelName = 'gemini-3.5-flash';
+
+LanguageOption languageByCode(String code) {
   return languages.firstWhere(
     (l) => l.code == code,
     orElse: () => languages.first,
